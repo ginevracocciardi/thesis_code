@@ -1,0 +1,724 @@
+---
+title: "Prediction"
+author: "Ginevra Cocciardi"
+output: pdf_document
+---
+
+We start by setting up the environment
+
+```{r setup, include=FALSE}
+rm(list = ls())
+setwd("/Users/ginevracocciardi/Desktop/tesi/dati")
+campione <- read.csv('campione.csv', sep = ';', dec = ",")
+corrds <- read.csv('corrds.csv', sep = ',', dec = ",")
+corrds$X.1 <- NULL
+```
+
+Then we load the needed libraries:
+
+```{r libraries, include = FALSE}
+library(tidyr)             # basic
+library(sjmisc)            # used for string evaluation
+library(nnet)              # used to fit the model
+library(corrplot)          # for correlation plots
+library(ggplot2)           # for visualization
+library(Hmisc)             # for mean and median of various absolute errors related to ordinary multiple regression models
+library(reshape2)          # aggregate data
+library(brant)             # for brant test
+library(ModelMetrics)      # metrics for methods evaluation
+library(ordinal)           # for cumulative link (mixed) models
+library(fastDummies)       # dummy variables creation
+library(MASS)              # polr ??
+library(knitr)             # general-purpose tool for dynamic report
+library(tree)              # for classification tree
+library(rpart)             # recursive partitioning and regression trees
+library(rpart.plot)	       # rpart visualizations			
+library(RColorBrewer)		   # for plot colors
+library(party)	           # recursive partitioning			
+library(partykit)				   # visualizing tree-structured regression and classification models
+library(caret)	           # training and plotting classification
+library(rattle)            # in this case used for visualization of classification tree
+library(radiant.data)      # for combining data
+library(forcats)           # reordering factor levels
+library(randomForest)      # random forest model
+```
+
+Then we load the data and we remove the NAs in our data.
+```{r}
+#campione <- read.csv('campione.csv', sep = ';', dec = ",")
+dim(campione)
+campione <- campione %>% drop_na()
+dim(campione)
+```
+It turns out we have none.
+Ho aggiunto un check sulle dimensioni, chiaramente non lo vorremo nel codice finale, ma qui ci serve per controllare se ci sono na (ci sono chiaramente altri modi)
+
+## DATA CLEANING
+As a first step we give good names to our variables (columns) and we transform the first column into an id (instead of timestamp)
+(Scrivendo in questo modo l'elenco delle variabili è più chiaro, poi puoi anche inserire il codebook di fianco)
+```{r}
+names(campione)[1:23] <- c('id',                  # timestamp then id
+                           'cosa_pensi_acquisto', # attitude about buying organic food products
+                           'inquinamento',        # concern about air pollution
+                           'camb_clim',           # concern about climate change
+                           'rifiuti',             # concern about waste production and disposal
+                           'tieni_agg',           # keeping up to date with news about the environment
+                           'bio_buono_salute',    # organic food is better for your health
+                           'vero_bio',            # ability to recognize a true organic food
+                           'bio_label',           # ability to recognize the biolabel
+                           'ecolabel',            # ability to recognize the ecolabel
+                           'azioni_biopro',       # list of actions to be certified as organic food
+                           'compri',              # purchase of organic food products
+                           'spesa',               # willingness to spend 
+                           'fai',                 # eco-friendly everyday actions
+                           'vuoi_fare',           # planned to start eco-friendly everyday actions 
+                           'obbligo_soc',         # social pressure to undertake eco-friendly actions
+                           'sostieni_ass',        # support organizations for the environment 
+                           'age', 
+                           'gender', 
+                           'job',
+                           'how_many_people',     # size of the household
+                           'income', 
+                           'education')
+campione['id'] <- c(1:nrow(campione))
+```
+
+The following step is quite crucial, since most of our categorical variables are ordered, we need to tell R as much. 
+Also, we take this opportunity to explicitly tell R the type of all our variables
+```{r multilevel}
+campione['cosa_pensi_acquisto'] <- factor(campione$cosa_pensi_acquisto, 
+                                          levels = c('Inutile', "Poco utile", 'Abbastanza importante', 'Molto importante'), 
+                                          ordered = TRUE)
+campione['inquinamento'] <- factor(campione$inquinamento, 
+                                   levels = c('No', "Non molta", 'Abbastanza', 'Molta'), 
+                                   ordered = TRUE)
+campione['camb_clim'] <- factor(campione$camb_clim, 
+                                levels = c('No', "Non molta", 'Abbastanza', 'Molta'), 
+                                ordered = TRUE)
+campione['rifiuti'] <- factor(campione$rifiuti, 
+                              levels = c('No', "Non molto", 'Abbastanza', 'Molto'), 
+                              ordered = TRUE)
+```
+
+```{r binary_variables}
+# binomiali: 
+campione['tieni_agg'] <- factor(campione$tieni_agg, levels = c("No", "Sì"))
+campione['vero_bio'] <- as.factor(campione$vero_bio)
+campione['bio_label'] <- as.factor(campione$bio_label)
+campione['ecolabel'] <- as.factor(campione$ecolabel)
+campione['bio_buono_salute'] <- as.factor(campione$bio_buono_salute)
+```
+There is a question on the bio certification, so we need to check whether the 
+individual knows enough or not. There were 6 answers to give: we give one point for each correct answer
+And remove 0.75 for wrong answers. We want to have 3 as threshold and we want to 
+penalise who answers "true" to all of them (2 of the correct answers are false)
+```{r}
+
+good_strings <- c("pluriennale", "propagazione", "proveniente", "OGM")
+bad_strings <- c("annuale", "fattori")
+campione$conoscenza_bio <- sapply(campione$azioni_biopro, 
+                                  function(x) sum(sapply(good_strings, function(y) str_contains(x,y)))
+                                              -0.75*sum(sapply(bad_strings, function(y) str_contains(x,y))))
+```
+
+We can finally make it a binary variable
+```{r}
+campione['conoscenza_bio'] <- as.factor(ifelse(campione$conoscenza_bio >= 3, 'Sì', 'No'))
+```
+
+We now get to our response variable. We had 4 levels, however one (the highest) is under represented and we have to merge it with the third.
+```{r}
+campione['compri'] <- factor(campione$compri, levels = c('No', "Solo alcuni prodotti", 'Il più possibile', 'Tutto'), ordered = TRUE)
+levels(campione$compri) <- c('No', "Solo alcuni prodotti", 'Il più possibile', 'Il più possibile')
+
+# altre binarie con expected positive influence
+campione['obbligo_soc'] <- as.factor(campione$obbligo_soc)
+campione['sostieni_ass'] <- as.factor(campione$sostieni_ass)
+
+# genere as factor
+campione['gender'] <- as.factor(campione$gender)
+
+# lavoro as factor
+campione['job'] <- as.factor(campione$job)
+
+# nucleo familiare factor con livelli
+campione['how_many_people'] <- factor(campione$how_many_people, levels = c('Solo me stesso/a', "2/3", '4/5', '6 +'), ordered = TRUE)
+
+# income factor con livelli
+campione['income'] <- factor(campione$income, levels = c('Fino a € 36.151,98', "Tra € 36.151,99 e € 70.000", 'Tra € 70.000,01 e € 100.000', 'Più di € 100.000'), ordered = TRUE)
+
+# education factor con livelli
+campione['education'] <- factor(campione$education, levels = c('Licenza elementare', "Licenza media", 'Diploma di scuola superiore di secondo grado', 'Laurea'), ordered = TRUE)
+
+# contare quante azioni vengono fatte
+good_strings <- c("Riciclo", "Risparmio", "LED", "Riduzione", "classi", "detersivi", "bici")
+campione$num_fai <- sapply(campione$fai, function(x) sum(sapply(good_strings, function(y) str_contains(x,y))))
+
+# quante azioni vogliono fare
+campione$num_vuoi_fare <- sapply(campione$vuoi_fare, function(x) sum(sapply(good_strings, function(y) str_contains(x,y))))
+
+```
+
+```{r}
+# creo variabile binaria per eco-friendly behaviour
+campione <- mutate(campione, eco_friendly_beha = ifelse(num_fai>2&num_vuoi_fare>0, "Sì", ifelse(num_fai>4, "Sì", "No")))
+
+campione$eco_friendly_beha <- as.factor(campione$eco_friendly_beha)
+```
+
+```{r}
+campione$concern_num <- rowSums( corrds[,3:5] )
+campione$concern <- ''
+
+for (i in (1:nrow(campione))) {
+  if (campione$concern_num[i] <= 3){
+    campione$concern[i] <- 'No'
+  } else if (campione$concern_num[i] > 3 & campione$concern_num[i] <= 6) {
+    campione$concern[i] <- 'Non molto'
+  } else if (campione$concern_num[i] > 6 & campione$concern_num[i] <= 9) {
+    campione$concern[i] <- 'Abbastanza'
+  } else if (campione$concern_num[i] > 9) {
+    campione$concern[i] <- 'Molto'
+  }
+} 
+
+for (i in (1:nrow(corrds))) {
+  if (corrds$concern[i] <= 3){
+    corrds$concern[i] <- 1
+  } else if (corrds$concern[i] > 3 & corrds$concern[i] <= 6) {
+    corrds$concern[i] <- 2
+  } else if (corrds$concern[i] > 6 & corrds$concern[i] <= 9) {
+    corrds$concern[i] <- 3
+  } else if (corrds$concern[i] > 9) {
+    corrds$concern[i] <- 4
+  }
+} 
+
+campione['concern'] <- factor(campione$concern, 
+                                          levels = c('No', "Non molto", 'Abbastanza', 'Molto'), 
+                                          ordered = TRUE)
+
+```
+
+```{r}
+data <- campione[, c(2, 29, 6:10, 24, 12:13, 27, 16:23)]
+dim(data)
+data <- data %>% drop_na()
+dim(data)
+```
+Once more, nothing is thrown away.
+Saving campione and removing it.
+```{r}
+write.csv(campione, file = "campione_mod.csv")
+rm(list = c("campione", "good_strings", "bad_strings"))
+```
+
+We divide the data into train and test:
+
+```{r}
+set.seed(10)
+trainingRows <- sample(1:nrow(data), 0.7*nrow(data))
+training <- data[trainingRows, ]
+test <- data[-trainingRows, ]
+```
+
+##### CUMULATIVE LINK MODEL
+
+Now we create the model:
+
+```{r}
+
+c <- clm(compri ~ cosa_pensi_acquisto + concern + tieni_agg + bio_buono_salute + 
+           vero_bio + bio_label + ecolabel + conoscenza_bio + spesa + eco_friendly_beha + obbligo_soc + sostieni_ass + age +
+           gender + job + how_many_people + income + education, data = data)
+
+summary(c)
+
+anova(c, type = 2)
+```
+
+Here we see whch variables are the most statically significant. Since most of them are not, those are removed. Some others only take some levels of a variable, therefore the next step is to create dummies so we can only look at the affects that are significant to the model:
+
+```{r}
+
+c2 <- clm(compri ~ cosa_pensi_acquisto + tieni_agg + vero_bio + conoscenza_bio + spesa + eco_friendly_beha + sostieni_ass, data = data)
+
+anova(c2, type = 2)
+```
+
+We are satisfied with the remaining variables, as each one has an statistically significant effect on the dipendent one. We noe divide train and test and go on with the prediction:
+
+```{r}
+
+c2 <- clm(compri ~ cosa_pensi_acquisto + tieni_agg + vero_bio + conoscenza_bio + spesa + eco_friendly_beha + sostieni_ass, data = training)
+
+predictpurchase = predict(c2, test, type = "class")
+table(test$compri, predictpurchase$fit)
+
+ce(actual = test$compri, predicted = predictpurchase$fit) 
+
+### train error
+predictpurchase_train = predict(c2, training, type = "class")
+table(training$compri, predictpurchase_train$fit)
+ce(actual = training$compri, predicted = predictpurchase_train$fit) 
+```
+
+
+##### ORDINAL LOGISTIC REGRESSION
+
+We fit the model with all the variables. We use the anova function then to see whoch ones are the most statistically significant:
+
+```{r}
+
+m <- polr(compri ~ cosa_pensi_acquisto + concern + tieni_agg + bio_buono_salute + 
+            vero_bio + bio_label + ecolabel + conoscenza_bio + spesa + eco_friendly_beha + obbligo_soc + sostieni_ass + age +
+            gender + job + how_many_people + income + education, data = data, Hess=TRUE)
+
+car::Anova(m, type = 2)
+summary(m)
+```
+
+
+```{r}
+m2 <- polr(compri ~ cosa_pensi_acquisto + tieni_agg + vero_bio + conoscenza_bio + spesa + eco_friendly_beha + sostieni_ass, data = data)
+
+car::Anova(m2, type = 2)
+```
+
+Before going on with the predictions we must make sure taht all the assumptions for the model hold:
+
+1. No multicollinearity
+
+There are different ways to look at this. The first is the package "vif". The variables need to be numeric so we use the numeric dataset used for the validation part:
+
+```{r}
+# corrds <- read.csv('corrds.csv', sep = ',', dec = ",")
+lm_check <- corrds[, c(2, 6, 8, 11, 13:16)] # tolgo age_slots
+
+lm_model <- lm(compri_scala ~ ., data = lm_check)
+car::vif(lm_model) # tutte minori di 5/10 quindi ok
+```
+
+Another way is to actually look at the correlations by hand. In this case, visuals are quicker:
+
+```{r}
+
+corr_check <- corrds[, c(2, 6, 8, 11, 13, 14, 16)] # tolgo compri perchè è la mia dipendente
+c <- cor(corr_check, method = "spearman")
+
+library("PerformanceAnalytics")
+chart.Correlation(c, histogram=TRUE, pch=19)
+
+```
+Also in this case there is no evidence of multicollinearity. 
+
+2. Proportional odds
+
+```{r}
+sf = function(y) {
+  c('Y>=1' = qlogis(mean(y >= 1)),
+    'Y>=2' = qlogis(mean(y >= 2)),
+    'Y>=3' = qlogis(mean(y >= 3)))
+}
+
+s = with(data, 
+          summary(as.numeric(compri) ~ cosa_pensi_acquisto + tieni_agg + vero_bio + conoscenza_bio + spesa + eco_friendly_beha + sostieni_ass, fun = sf))
+s
+
+# with(data, table(compri,cosa_pensi_acquisto))
+```
+
+As we can see from here, it is already clear that cosa_pensi_acquisto does not respect the proportional odds assumption. Therefore, we already eliminate it and go on only with the other variables:
+
+```{r}
+s = with(data, 
+          summary(as.numeric(compri) ~ tieni_agg + vero_bio + conoscenza_bio + spesa + eco_friendly_beha + sostieni_ass, fun = sf))
+s
+```
+
+```{r}
+#glm(I(as.numeric(compri) >= 2) ~ cosa_pensi_acquisto, family="binomial", data = data)
+#glm(I(as.numeric(compri) >= 3) ~ cosa_pensi_acquisto, family="binomial", data = data)
+
+glm(I(as.numeric(compri) >= 2) ~ tieni_agg, family="binomial", data = data)
+glm(I(as.numeric(compri) >= 3) ~ tieni_agg, family="binomial", data = data)
+
+glm(I(as.numeric(compri) >= 2) ~ vero_bio, family="binomial", data = data) 
+# stima dell'effetto di vero_bio sullo scegliere "No" contro "solo alcuni" e "il piu possibile"
+
+glm(I(as.numeric(compri) >= 3) ~ vero_bio, family="binomial", data = data)
+# stima dell'effetto di vero_bio sullo scegliere "No" e "solo alcuni" contro "il piu possibile"
+
+glm(I(as.numeric(compri) >= 2) ~ conoscenza_bio, family="binomial", data = data)
+glm(I(as.numeric(compri) >= 3) ~ conoscenza_bio, family="binomial", data = data)
+
+glm(I(as.numeric(compri) >= 2) ~ spesa, family="binomial", data = data)
+glm(I(as.numeric(compri) >= 3) ~ spesa, family="binomial", data = data)
+
+glm(I(as.numeric(compri) >= 2) ~ eco_friendly_beha, family="binomial", data = data)
+glm(I(as.numeric(compri) >= 3) ~ eco_friendly_beha, family="binomial", data = data)
+
+glm(I(as.numeric(compri) >= 2) ~ sostieni_ass, family="binomial", data = data)
+glm(I(as.numeric(compri) >= 3) ~ sostieni_ass, family="binomial", data = data)
+```
+
+```{r}
+s[, 4] <- s[, 4] - s[, 3]
+s[, 3] <- s[, 3] - s[, 3]
+s
+```
+
+```{r}
+plot(s, which=1:3, pch=1:3, xlab='logit', main=' ', xlim=range(s[,3:4]))
+
+```
+
+c
+
+Now we can proceed with the prediction:
+(Note that the random guessing log loss is 0.9871453907863718 -calculations made on logloss_function.py-)
+
+```{r}
+m2 <- polr(compri ~ tieni_agg + vero_bio + conoscenza_bio + spesa + eco_friendly_beha + sostieni_ass, data = training)
+#summary(m2)
+#car::Anova(m2, type = 2)
+
+# p-value = 1 - pchisq(deviance, degrees of freedom)
+# 1 - pchisq(858.3816, 834) 
+
+predictpurchase_polr = ordered(predict(m2,test))
+p <- predict(m2, test, type = "probs")
+
+table(test$compri, predictpurchase_polr)
+ce(actual = test$compri, predicted = predictpurchase_polr)
+mlogLoss(actual = test$compri, predicted = p) 
+
+# train error
+# predictpurchase_polr_train = ordered(predict(m2,training))
+# table(training$compri, predictpurchase_polr_train)
+# ce(actual = training$compri, predicted = predictpurchase_polr_train)
+```
+
+Results are not optimal since we had to eliminate what it looked like to be the most influential variable: cosa_pensi_acquisto.
+
+```{r, warning=FALSE}
+set.seed(101)
+
+pol_shuffle <- data[sample(nrow(data)),]
+n <- nrow(data)
+
+div <- function(k){
+  n <- nrow(data)
+  dim_k <- n%/%k
+  separ <- c(0 ,rep(0, (k-1)), n)
+  for (i in 2:k){
+    s <- dim_k
+    separ[i] <- s
+    dim_k <- s + n%/%k
+  }
+  return(separ)
+}
+
+k <- 10
+err <- rep(0, k)
+err_p <- rep(0, k)
+#err_train <- rep(0, k)
+
+for (i in 1:k){
+  index <- seq(1, n)
+  ind_test <- seq(div(k)[i]+1, div(k)[i+1])
+  index <- index[-ind_test]
+  train.sub <- pol_shuffle[index,]
+  test.sub <- pol_shuffle[-index,]
+  err_sub <- rep(0, nrow(test.sub))
+  multi_fit <- polr(polr(compri ~ tieni_agg + vero_bio + conoscenza_bio + spesa + eco_friendly_beha + sostieni_ass, data = data, subset = index, Hess=TRUE))
+  multi_pred <- ordered(predict(multi_fit, test.sub))
+  multi_pred_p <- predict(m2, test.sub, type = "probs")
+  #multi_pred_train <- ordered(predict(multi_fit, train.sub))
+  err[i] <- ce(predicted = multi_pred, actual = test.sub$compri)
+  err_p[i] <- mlogLoss(actual = test.sub$compri, predicted = multi_pred_p)
+  #err_train[i] <- ce(predicted = multi_pred_train, actual = train.sub$compri)
+}
+mean(err) 
+mean(err_p)
+#mean(err_train)
+
+```
+
+The error gets even worse. Bad model. 
+
+##### CLASSIFICATION TREES
+
+Since we are not satiflied with the results so far, it could be interesting to look at classification trees. Although the variance is higher than in linear methods, there are no assumptions about the variables that can be inserted:
+
+
+```{r}
+
+purchase_tree <- tree(compri ~ cosa_pensi_acquisto + concern + tieni_agg + bio_buono_salute + 
+                       vero_bio + bio_label + ecolabel + conoscenza_bio + spesa + eco_friendly_beha + obbligo_soc + sostieni_ass + age +
+                       gender + job + how_many_people + income + education, data = data)
+summary(purchase_tree)
+
+
+plot(purchase_tree)
+text(purchase_tree, pretty = 0)
+```
+
+```{r}
+# train e test
+set.seed(1978)
+
+purchase_tree_split <- tree(compri ~ cosa_pensi_acquisto + concern + tieni_agg + bio_buono_salute + 
+                              vero_bio + bio_label + ecolabel + conoscenza_bio + spesa + eco_friendly_beha + obbligo_soc + sostieni_ass + age +
+                              gender + job + how_many_people + income + education, data = data, subset = trainingRows)
+summary(purchase_tree_split)
+
+plot(purchase_tree_split)
+text(purchase_tree_split, pretty=0)
+
+
+tree.pred.test = predict(purchase_tree_split, test, type="class")
+tree.pred.test.p = predict(purchase_tree_split, test, type="vector")
+
+# test 
+table(predicted = tree.pred.test, actual = test$compri)
+ce(predicted = tree.pred.test, actual = test$compri)
+mlogLoss(predicted = tree.pred.test.p, actual = test$compri)
+
+# train error
+tree.pred.train = predict(purchase_tree_split, training, type="class")
+table(predicted = tree.pred.train, actual = training$compri)
+ce(predicted = tree.pred.train, actual = training$compri)
+```
+Pruning:
+```{r}
+
+# per vedere dove tagliare 
+cv_purchase = cv.tree(purchase_tree_split, FUN = prune.misclass)
+
+min_idx2 = tail(order(cv_purchase$dev, decreasing = TRUE),1) # usando questo prendiamo il più piccolo albero che minimizza
+min_idx2
+
+# number of terminal nodes in that tree
+best_n2 <- cv_purchase$size[min_idx2]
+
+# misclassification rate of each tree
+cv_purchase$dev / length(trainingRows)
+
+# default plot
+plot(cv_purchase)
+# better plot
+plot(cv_purchase$size, cv_purchase$dev / nrow(training), type = "b",
+     xlab = "Tree Size", ylab = "CV Misclassification Rate")
+```
+
+```{r}
+# pruning
+start.time <- Sys.time()
+tree_prune = prune.misclass(purchase_tree_split, best = best_n2, loss=matrix(c(0,1, 2, 1, 0, 1, 2, 1, 0), byrow=TRUE, nrow=3))
+end.time <- Sys.time()
+end.time - start.time
+
+summary(tree_prune)
+
+plot(tree_prune)
+text(tree_prune, pretty = 0)
+title(main = "Pruned Classification Tree")
+```
+
+
+```{r}
+tree.pred = predict(tree_prune, test, type="class")
+table(tree.pred, test$compri)
+tree.predp = predict(tree_prune, test, type="vector")
+
+ce(test$compri, tree.pred)
+mlogLoss(test$compri, tree.predp)
+
+# train error
+tree.pred_test = predict(tree_prune, training, type="class")
+table(tree.pred_test, training$compri)
+ce(training$compri, tree.pred_test)
+```
+Although the classification error got worse, the loss log is back to be better than random guessing threshold (0.98). Another way to fit classification trees is the function rpart, where we get the matrix of the classification probabilities:
+
+```{r}
+# proviamo con rpart
+set.seed(101)
+
+tree.2 <- rpart(compri ~ cosa_pensi_acquisto + concern + tieni_agg + bio_buono_salute + 
+                  vero_bio + bio_label + ecolabel + conoscenza_bio + spesa + eco_friendly_beha + obbligo_soc + 
+                  sostieni_ass + age + gender + job + how_many_people + income + education, subset = trainingRows, 
+                data = data, method = 'class', parms=list(loss=matrix(c(0,1, 2, 1, 0, 1, 2, 1, 0), byrow=TRUE, nrow=3)))
+```
+
+We make the prediction before and after pruning, so we can see if the pruned variables are actually ineffective for the classification:
+
+```{r}
+pred <- predict(tree.2, test, type = "class")
+predp <- predict(tree.2, test, type = "prob")
+table(pred, test$compri)
+
+ce(test$compri, pred)
+mlogLoss(test$compri, predp)
+
+# train error
+pred_train <- predict(tree.2, training, type = "class")
+table(pred_train, training$compri)
+ce(training$compri, pred_train)
+```
+The difference bewteen train and test classification error, is not enormous, but it is possible that there is a bit of overfitting. Let's see with pruning:
+
+```{r}
+# pruning
+printcp(tree.2)
+plotcp(tree.2, upper = "splits")
+
+start.time <- Sys.time()
+fit.pruned = prune(tree.2, cp = tree.2$cptable[which.min(tree.2$cptable[,'xerror']),'CP'])
+
+#par(mfrow = c(1, 2))
+prp(tree.2)
+prp(fit.pruned, main = 'Pruned Rpart Tree', under.cex = 12)
+```
+
+```{r}
+pred <- predict(fit.pruned, test, type = "class")
+predp <- predict(fit.pruned, test, type = "prob")
+table(pred, test$compri)
+
+ce(test$compri, pred)
+mlogLoss(test$compri, predp)
+
+
+# train error
+# pred_train_pruned <- predict(fit.pruned, training, type = "class")
+# table(pred_train_pruned, training$compri)
+# ce(training$compri, pred_train_pruned)
+```
+Both the classification error and the loss logit get better with pruning, meaning that the pruned variables did not have any statistical significance for the model. Moreover, there seem to be less difference between train and test error.
+
+```{r}
+# importanza variabili
+fit.pruned$variable.importance %>% 
+  data.frame() %>%
+  rownames_to_column(var = "Feature") %>%
+  rename(Overall = '.') %>%
+  ggplot(aes(x = fct_reorder(Feature, Overall), y = Overall)) +
+  geom_pointrange(aes(ymin = 0, ymax = Overall), color = "cadetblue", size = .3) +
+  theme_minimal() +
+  coord_flip() +
+  labs(x = "", y = "", title = "Variable Importance")
+```
+
+```{r}
+# importanza variabili
+tree_prune$ %>% 
+  data.frame() %>%
+  rownames_to_column(var = "Feature") %>%
+  rename(Overall = '.') %>%
+  ggplot(aes(x = fct_reorder(Feature, Overall), y = Overall)) +
+  geom_pointrange(aes(ymin = 0, ymax = Overall), color = "cadetblue", size = .3) +
+  theme_minimal() +
+  coord_flip() +
+  labs(x = "", y = "", title = "Variable Importance")
+```
+
+
+##### BOOSTING
+
+```{r} 
+set.seed(10)
+bag_purchase <- randomForest(compri ~ cosa_pensi_acquisto + concern + tieni_agg + bio_buono_salute + 
+                               vero_bio + bio_label + ecolabel + conoscenza_bio + spesa + eco_friendly_beha + obbligo_soc + sostieni_ass + age +
+                               gender + job + how_many_people + income + education, data = data, subset = trainingRows, mtry = 18, importance = TRUE) 
+
+bag_purchase
+
+#var_importance <- sort(bag_purchase$importance[,4], decreasing = TRUE)
+#var_importance
+
+bag_pred <- predict(bag_purchase, newdata = data[-trainingRows,])
+bag_predp <- predict(bag_purchase, newdata = data[-trainingRows,], type = "prob")
+
+ce(test$compri, bag_pred)
+mlogLoss(test$compri, bag_predp)
+
+# train error
+bag_pred_train <- predict(bag_purchase)
+ce(training$compri, bag_pred_train)
+```
+
+```{r}
+varImpPlot(bag_purchase, sort=TRUE, main = 'Bagging variables Importance', type = 1)
+```
+
+
+Both the classification error and the log loss get better, but we still have 2 oof by two predictions. Let's see if we can decrease them both more with a random forest.
+
+##### RANDOM FOREST
+
+```{r}
+set.seed(101)
+rf_purchase<- randomForest(compri ~ cosa_pensi_acquisto + concern + tieni_agg + bio_buono_salute + 
+                             vero_bio + bio_label + ecolabel + conoscenza_bio + spesa + eco_friendly_beha + obbligo_soc + sostieni_ass + age +
+                             gender + job + how_many_people + income + education, data = data, subset = trainingRows, mtry = 4, importance = TRUE) # mtry = √p = √18 = 4.24 = 4
+
+rf_purchase
+
+#var_importance_rf <- sort(rf_purchase$importance[,4], decreasing = TRUE)
+#var_importance_rf
+
+rf_pred <- predict(rf_purchase, newdata = data[-trainingRows,])
+rf_predp <- predict(rf_purchase, type = "prob", newdata = data[-trainingRows,])
+
+ce(test$compri, rf_pred)
+mlogLoss(test$compri, rf_predp)
+
+# train error
+rf_pred_train <- predict(rf_purchase)
+ce(training$compri, rf_pred_train)
+```
+There is a slight improvement, but there are still 2 off by two predictions. We use the functiontuneRF to search for optimal mtry value, which could help an even better classification:
+
+```{r}
+set.seed(1)
+rftuned <- tuneRF(subset(data[trainingRows,], select = c(-compri)),data[trainingRows,]$compri, improve = 0.000005, doBest = TRUE, stepFactor = 2)
+```
+
+We fit the model again, because although with the function "tuneRF, doBest = TRUE", we get a fitting of the random forest model, it is not possible to get the variable importance with the "MeanDecreaseAccuracy", only the "MeanDecreaseGini", in fact, MeanDecreaseGini is faster to compute, but unstable and quite biased, thus quite inferior. 
+
+```{r}
+set.seed(101)
+rf_purchase<- randomForest(compri ~ cosa_pensi_acquisto + concern + tieni_agg + bio_buono_salute + 
+                             vero_bio + bio_label + ecolabel + conoscenza_bio + spesa + eco_friendly_beha + obbligo_soc + sostieni_ass + age +
+                             gender + job + how_many_people + income + education, data = data, subset = trainingRows, mtry = rftuned$mtry, importance = TRUE)
+
+rf_purchase
+
+rf_pred <- predict(rf_purchase, newdata = data[-trainingRows,])
+rf_predp <- predict(rf_purchase, type = "prob", newdata = data[-trainingRows,])
+
+ce(test$compri, rf_pred)
+mlogLoss(test$compri, rf_predp)
+
+# train error
+rf_pred_train <- predict(rf_purchase)
+ce(training$compri, rf_pred_train)
+
+```
+
+In this model, the log loss has not changed, but it remained significantly under the random guessing threshold, so we are satisfied with the value. The classification error on the contrary has decreased again, even if slightly, it's still better.
+
+We then have a glance at the variables importance, for the final considerations: 
+```{r}
+varImpPlot(rf_purchase, sort=TRUE, main = 'Random Forest variables Importance', type = 1)
+```
+
+Here "cosa_pensi_acquisto" is again at the top, which has been proven by all the other models to be the most statistically significant. 
+
+
+
+
+
+
