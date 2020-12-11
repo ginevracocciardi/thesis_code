@@ -1,0 +1,466 @@
+---
+title: "data_cleaning_EDA"
+author: "Ginevra Cocciardi"
+output: pdf_document
+---
+For the analysis we need both a numeric dataset and categorical dataset: 
+```{r}
+
+rm(list = ls())
+setwd("/Users/ginevracocciardi/Desktop/tesi/dati")
+campione <- read.csv('campione.csv', sep = ';', dec = ",")
+```
+
+##### DATA CLEANING
+
+First we prepare the dataset for the analysis (therefore, leaving the variables as categorical, not numeric)
+```{r}
+
+names(campione)[1:23] <- c('id',                  # timestamp then id
+                           'cosa_pensi_acquisto', # attitude about buying organic food products
+                           'inquinamento',        # concern about air pollution
+                           'camb_clim',           # concern about climate change
+                           'rifiuti',             # concern about waste production and disposal
+                           'tieni_agg',           # keeping up to date with news about the environment
+                           'bio_buono_salute',    # organic food is better for your health
+                           'vero_bio',            # ability to recognize a true organic food
+                           'bio_label',           # ability to recognize the biolabel
+                           'ecolabel',            # ability to recognize the ecolabel
+                           'azioni_biopro',       # list of actions to be certified as organic food
+                           'compri',              # purchase of organic food products
+                           'spesa',               # willingness to spend 
+                           'fai',                 # eco-friendly everyday actions
+                           'vuoi_fare',           # planned to start eco-friendly everyday actions 
+                           'obbligo_soc',         # social pressure to undertake eco-friendly actions
+                           'sostieni_ass',        # support organizations for the environment 
+                           'age', 
+                           'gender', 
+                           'job',
+                           'how_many_people',     # size of the household
+                           'income', 
+                           'education')
+campione['id'] <- c(1:nrow(campione))
+
+campione['cosa_pensi_acquisto'] <- factor(campione$cosa_pensi_acquisto, 
+                                          levels = c('Inutile', "Poco utile", 'Abbastanza importante', 'Molto importante'), 
+                                          ordered = TRUE)
+campione['inquinamento'] <- factor(campione$inquinamento, 
+                                   levels = c('No', "Non molta", 'Abbastanza', 'Molta'), 
+                                   ordered = TRUE)
+campione['camb_clim'] <- factor(campione$camb_clim, 
+                                levels = c('No', "Non molta", 'Abbastanza', 'Molta'), 
+                                ordered = TRUE)
+campione['rifiuti'] <- factor(campione$rifiuti, 
+                              levels = c('No', "Non molto", 'Abbastanza', 'Molto'), 
+                              ordered = TRUE)
+
+campione['tieni_agg'] <- factor(campione$tieni_agg, levels = c("No", "Sì"))
+campione['vero_bio'] <- as.factor(campione$vero_bio)
+campione['bio_label'] <- as.factor(campione$bio_label)
+campione['ecolabel'] <- as.factor(campione$ecolabel)
+campione['bio_buono_salute'] <- as.factor(campione$bio_buono_salute)
+
+good_strings <- c("pluriennale", "propagazione", "proveniente", "OGM")
+bad_strings <- c("annuale", "fattori")
+
+library(sjmisc)
+campione$conoscenza_bio <- sapply(campione$azioni_biopro, 
+                                  function(x) sum(sapply(good_strings, function(y) str_contains(x,y)))
+                                  -0.75*sum(sapply(bad_strings, function(y) str_contains(x,y))))
+
+campione['conoscenza_bio'] <- as.factor(ifelse(campione$conoscenza_bio >= 3, 'Sì', 'No'))
+
+campione['compri'] <- factor(campione$compri, levels = c('No', "Solo alcuni prodotti", 'Il più possibile', 'Tutto'), ordered = TRUE)
+levels(campione$compri) <- c('No', "Solo alcuni prodotti", 'Il più possibile', 'Il più possibile')
+
+# altre binarie con expected positive influence
+campione['obbligo_soc'] <- as.factor(campione$obbligo_soc)
+campione['sostieni_ass'] <- as.factor(campione$sostieni_ass)
+
+# genere as factor
+campione['gender'] <- as.factor(campione$gender)
+
+# lavoro as factor
+campione['job'] <- as.factor(campione$job)
+
+# nucleo familiare factor con livelli
+campione['how_many_people'] <- factor(campione$how_many_people, levels = c('Solo me stesso/a', "2/3", '4/5', '6 +'), ordered = TRUE)
+
+# income factor con livelli
+campione['income'] <- factor(campione$income, levels = c('Fino a € 36.151,98', "Tra € 36.151,99 e € 70.000", 'Tra € 70.000,01 e € 100.000', 'Più di € 100.000'), ordered = TRUE)
+
+# education factor con livelli
+campione['education'] <- factor(campione$education, levels = c('Licenza elementare', "Licenza media", 'Diploma di scuola superiore di secondo grado', 'Laurea'), ordered = TRUE)
+
+# contare quante azioni vengono fatte
+good_strings <- c("Riciclo", "Risparmio", "LED", "Riduzione", "classi", "detersivi", "bici")
+campione$num_fai <- sapply(campione$fai, function(x) sum(sapply(good_strings, function(y) str_contains(x,y))))
+
+# quante azioni vogliono fare
+campione$num_vuoi_fare <- sapply(campione$vuoi_fare, function(x) sum(sapply(good_strings, function(y) str_contains(x,y))))
+
+campione <- mutate(campione, eco_friendly_beha = ifelse(num_fai>2&num_vuoi_fare>0, "Sì", ifelse(num_fai>4, "Sì", "No")))
+
+campione$eco_friendly_beha <- as.factor(campione$eco_friendly_beha)
+```
+
+```{r}
+write.csv(campione, "campione_cat.csv")
+```
+
+
+```{r}
+campione['compri'] <- factor(campione$compri, levels = c('No', "Solo alcuni prodotti", 'Il più possibile', 'Tutto'), ordered = TRUE)
+levels(campione$compri) <- c('No', "Solo alcuni prodotti", 'Il più possibile', 'Tutto')
+
+# binarie: 
+# mi aspetto influsso positivo quindi si = 1, no = 0
+campione['tieni_agg'] <- ifelse(campione$tieni_agg == 'Sì', 1, 0)
+campione['vero_bio'] <- ifelse(campione$vero_bio == 'Sì', 1, 0)
+campione['bio_label'] <- ifelse(campione$bio_label == 'Sì', 1, 0)
+campione['ecolabel'] <- ifelse(campione$ecolabel == 'Sì', 1, 0)
+campione['conoscenza_bio'] <- ifelse(campione$conoscenza_bio == 'Sì', 1, 0)
+campione['bio_buono_salute'] <- ifelse(campione$bio_buono_salute == 'Sì', 1, 0)
+campione['obbligo_soc'] <- ifelse(campione$obbligo_soc == 'Sì', 1, 0)
+campione['sostieni_ass'] <- ifelse(campione$sostieni_ass == 'Sì', 1, 0)
+campione['eco_friendly_beha'] <- ifelse(campione$eco_friendly_beha == 'Sì', 1, 0)
+
+# facciamo divisione per generazioni
+campione$age_slots <- cut(campione$age, breaks=c(0, 24, 39, 54, 100), labels = c("Gen Z", "Millennials", "Gen X", "Baby Boomers"))
+campione$age_slots <- factor(campione$age_slots, levels = c("Gen Z", "Millennials", "Gen X", "Baby Boomers"), ordered = is.ordered(campione$age_slots))
+```
+
+#### CRONBACH'S ALPHA
+
+```{r}
+# chronbach's alpha per le domande (soglia dello 0.6)
+library(psych)
+
+alphads <- campione
+alphads <- alphads %>% drop_na()
+alphads$spesa <- factor(alphads$spesa)
+
+
+# ora le variabili factor con 4 livelli - scala likert 
+library(plyr)
+es <- revalue(alphads$cosa_pensi_acquisto, c('Inutile' = 1, 'Poco utile' = 2, 'Abbastanza importante' = 3, 'Molto importante' = 4))
+es2 <- revalue(alphads$inquinamento, c('No' = 1, "Non molta" = 2, 'Abbastanza' = 3, 'Molta' = 4))
+es3 <- revalue(alphads$camb_clim, c('No' = 1, "Non molta" = 2, 'Abbastanza' = 3, 'Molta' = 4))
+es4 <- revalue(alphads$rifiuti, c('No' = 1, "Non molto" = 2, 'Abbastanza' = 3, 'Molto' = 4))
+es5 <- revalue(alphads$compri, c('No' = 1, "Solo alcuni prodotti" = 2, 'Il più possibile' = 3, 'Tutto' = 4))
+es6 <- revalue(alphads$spesa, c('11' = 0, '13.5' = 1, '15.5' = 2, '18' = 3, '21' = 4))
+es7 <- revalue(alphads$gender, c('Femminile' = 1, 'Maschile' = 0))
+es8 <- revalue(alphads$how_many_people, c('Solo me stesso/a' = 1, '2/3' = 2, '4/5' = 3, '6 +' = 4))
+es9 <- revalue(alphads$income, c('Fino a € 36.151,98' = 1, 'Tra € 36.151,99 e € 70.000' = 2, 'Tra € 70.000,01 e € 100.000' = 3, 'Più di € 100.000' = 4))
+es10 <- revalue(alphads$education, c('Licenza elementare' = 1, 'Licenza media' = 2, 'Diploma di scuola superiore di secondo grado' = 3, 'Laurea' = 4))
+es11 <- revalue(alphads$age_slots, c('Gen Z' = 1, 'Millennials' = 2, 'Gen X' = 3, 'Baby Boomers' = 4))
+
+alphads['cosa_pensi_acquisto_scala'] <- as.numeric(es)
+alphads['inquinamento_scala'] <- as.numeric(es2)
+alphads['camb_clim_scala'] <- as.numeric(es3)
+alphads['rifiuti_scala'] <- as.numeric(es4)
+alphads['compri_scala'] <- as.numeric(es5)
+alphads['spesa_scala'] <- as.numeric(es6)
+alphads['gender_scala'] <- as.numeric(es7)
+alphads['people_scala'] <- as.numeric(es8)
+alphads['income_scala'] <- as.numeric(es9)
+alphads['edu_scala'] <- as.numeric(es10)
+alphads['age_scala'] <- as.numeric(es11)
+
+corrds <- alphads[, c(6:10, 16:18, 24, 27, 29:39)] 
+corrds <- corrds[, c(11:14, 1:5, 9, 6:7, 10, 15:16, 8, 17:21)] 
+corrds$gender_scala <- ifelse(corrds$gender_scala == 2, 1, 0)
+
+# 11:14 attitude 
+# 1:5, 9 knowledge 
+# 6:7, 10, 15:16 behaviour 
+# 8, 17:20 socio-dem 
+
+alphads <- alphads[, c(6:10, 16:17, 24, 27, 29:34)]
+#alphads <- alphads[, c(1:7, 9:16)]
+
+alphads_bin <- alphads[, c(1:9)] # scala 0/1
+alphads_scala <- alphads[, c(10:15)] # scala 1:4
+
+library(psy)
+
+# totale 
+cronbach(alphads)
+cronbach(alphads_bin)
+cronbach(alphads_scala)
+```
+
+
+
+##### CORRELATION #####
+
+
+```{r}
+# correlation plot: non ha senso guardare variabile per variabile, in quanto è il loro
+# significato insieme che secondo la letteratura influenza la variabile dipendente
+
+# attitude <- 1:4
+# knowledge <- 5:10
+# behaviour <- 11:16
+# socio-dem <- 17:21
+
+# corr socio dem
+corrds3 <- corrds[, c(14, 16:21)]
+corrds3$compri_scala <- scale(corrds3$compri_scala)
+corrds3$age <- scale(corrds3$age)
+corrds3$gender_scala <- scale(corrds3$gender_scala)
+corrds3$people_scala <- scale(corrds3$people_scala)
+corrds3$income_scala <- scale(corrds3$income_scala)
+corrds3$edu_scala <- scale(corrds3$edu_scala)
+corrds3$age_scala <- scale(corrds3$age_scala)
+
+G <-cor(corrds3) 
+corrplot(G, type="upper", order="hclust",
+         col=brewer.pal(n=8, name="RdYlBu"))
+
+chart.Correlation(corrds3, histogram=TRUE, pch=19) # no correlation 
+
+# dopo aver controllato macro argomenti e socio-dem 
+# guardo anche correlazione riguardo le specifiche domande
+# che secondo la letteratura influenzano decisione
+
+# 1: attitude towards buying
+# 2,3,4: environmental concerns
+# 11: social pressure
+# 12: support to ecological organizations
+# 13: sustainable actions
+# 14: buy eco-friendly products
+corrds4 <- corrds[, c(1:4, 11:14)]
+corrds4$concern <- rowSums( corrds4[,2:4] )
+corrds4 <- corrds4[, c(8, 1, 5:7, 9)]
+
+corrds4$compri_scala <- scale(corrds4$compri_scala)
+corrds4$cosa_pensi_acquisto_scala <- scale(corrds4$cosa_pensi_acquisto_scala)
+corrds4$sostieni_ass <- scale(corrds4$sostieni_ass)
+corrds4$obbligo_soc <- scale(corrds4$obbligo_soc)
+corrds4$concern <- scale(corrds4$concern)
+corrds4$eco_friendly_beha <- scale(corrds4$eco_friendly_beha)
+
+chart.Correlation(corrds4, histogram=TRUE, pch=19)
+write.csv(corrds, 'corrds.csv')
+```
+
+
+##### DATA VISUALIZATION
+
+```{r}
+library(ggplot2)
+
+### DEMOGRAPHICS ###
+
+# age
+age_plot <- ggplot(campione, aes(age_slots))
+a <- age_plot + geom_bar(width = 0.5, aes(fill=age_slots)) + 
+      scale_fill_brewer(palette = 'Pastel1') +
+      theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 15), legend.position = 'none', plot.title = element_text(size=18)) + 
+      labs(title="How old are you?", x = 'Generation', y = 'Count') 
+a
+
+#bage_plot <- ggplot(campione, aes(age))
+#ab <- bage_plot + geom_bar(width = 0.5) + 
+  #scale_fill_brewer(palette = 'Pastel1') +
+  #theme(axis.text.x = element_text(angle=65, vjust=0.6), legend.position = 'none', plot.title = element_text(size=18)) + 
+  #labs(title="How old are you?", x = 'Generation', y = 'Count') 
+
+
+# gender 
+gender_plot <- ggplot(campione, aes(gender))
+g <- gender_plot + geom_bar(width = 0.5, aes(fill=gender)) + 
+      scale_fill_brewer(palette = 'Pastel2') +
+      theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 15), legend.position = 'none', plot.title = element_text(size=18)) + 
+      labs(title="What gender do you identify as?", x = 'Gender', y = 'Count') +
+      scale_x_discrete(labels = c('Female', 'Male'))
+g
+
+# job 
+job_plot <- ggplot(campione, aes(job))
+j <- job_plot + geom_bar(width = 0.5, aes(fill=job)) + 
+      scale_fill_brewer(palette = 'Pastel1') +
+      theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 15), legend.position = 'none', plot.title = element_text(size=18)) + 
+      labs(title="What is your job?", x = 'Job', y = 'Count') +
+      scale_x_discrete(labels = c('Employee', 'Unemployed', 'Freelance', 'Student'))
+j
+
+# income
+income_plot <- ggplot(campione, aes(income))
+i <- income_plot + geom_bar(width = 0.5, aes(fill=income)) + 
+      scale_fill_brewer(palette = 'Pastel1') +
+      theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 12), legend.position = 'none', plot.title = element_text(size=18)) + 
+      labs(title="What is your annual income?", x = 'Income', y = 'Count') +
+      scale_x_discrete(labels = c('Up to €36.000', 'Between €36.000 and €70.000', 'Between €70.000 and €100.000', 'More than €100.000'))
+i
+
+# education
+edu_plot <- ggplot(campione, aes(education))
+e <- edu_plot + geom_bar(width = 0.5, aes(fill=education)) + 
+      scale_fill_brewer(palette = 'Pastel1') +
+      theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 12), legend.position = 'none', plot.title = element_text(size=18)) + 
+      labs(title="What is the last degree you have obtained?", x = 'Education', y = 'Count') +
+      scale_x_discrete(labels = c('Primary school diploma', 'Middle school diploma', 'High school diploma', 'University degree'))
+e
+
+# household size
+people_plot <- ggplot(campione, aes(how_many_people))
+p <- people_plot + geom_bar(width = 0.5, aes(fill=how_many_people)) + 
+      scale_fill_brewer(palette = 'Pastel1') +
+      theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 15), legend.position = 'none', plot.title = element_text(size=18)) + 
+      labs(title="How many people are there in your household?", x = 'People in the household', y = 'Count') +
+      scale_x_discrete(labels = c('Just myslef', '2/3', '4/5', '6 +'))
+p
+
+# unico grafico per variabili demografiche 
+library(gridExtra)
+grid.arrange(a, g, nrow = 1)
+grid.arrange(j, p, nrow = 1)
+grid.arrange(e, i, nrow = 1)
+
+# what do think about buying eco-friendly products?
+mytable <- table(campione$cosa_pensi_acquisto)
+
+pie(table(campione$cosa_pensi_acquisto), labels = paste(names(mytable), "\n", round(prop.table(table(campione$cosa_pensi_acquisto))*100), "%", sep = ""), 
+    main = "What do think about buying eco-friendly products?")
+
+
+# what do think about buying eco-friendly products?
+vals <- c(299, 382, 126, 34)
+val_names <- sprintf("%s (%s)", c("Very important", "Quite useful", "Not very uselful", "Useless"), scales::percent(round(vals/sum(vals), 2)))
+names(vals) <- val_names
+
+waffle::waffle(vals, title = "Waffle chart of attitude towards eco-friendly food purchase")
+
+# do you buy eco-friendly products?
+vals <- c(3, 245, 456, 137)
+val_names <- sprintf("%s (%s)", c("Everything", "As much as possible", "Only some products", "Nothing"), scales::percent(round(vals/sum(vals), 2)))
+names(vals) <- val_names
+
+waffle::waffle(vals, title = "Waffle chart of eco-friendly food purchase")
+
+conta = 0
+for (i in (1:nrow(campione))){
+  if (campione$compri[i] == 'No') {
+    conta <- conta +1
+  }
+}
+
+conta
+
+# are you worried about the environment? 
+# per questa rappresentazione è più significativo parlare di "concern" in generale
+# quindi le domande 2,3,4
+# uso la scala numerica range 1:4, e poi divido in bin:
+# 1-3: no
+# 4-6: non molto
+# 7-9: abbastanza
+# 10-12: molto 
+
+df <- data.frame(campione$inquinamento, campione$camb_clim, campione$rifiuti)
+
+names(df) <- c('inquinamento', 'camb_clim', 'rifiuti')
+
+df$inquinamento <- as.numeric(revalue(df$inquinamento, c('No' = 1, "Non molta" = 2, 'Abbastanza' = 3, 'Molta' = 4)))
+df$camb_clim <- as.numeric(revalue(df$camb_clim, c('No' = 1, "Non molta" = 2, 'Abbastanza' = 3, 'Molta' = 4)))
+df$rifiuti <- as.numeric(revalue(df$rifiuti, c('No' = 1, "Non molto" = 2, 'Abbastanza' = 3, 'Molto' = 4)))
+
+df$concern <- rowSums( df[,1:3] )
+
+df$concern <- cut(df$concern, breaks=c(0, 4, 7, 10, 12), labels = c("No", "Not much", "Quite a lot", "A lot"))
+
+mytable_concern <- table(df$concern)
+
+pie(table(df$concern), labels = paste(names(mytable_concern), "\n", round(prop.table(table(df$concern))*100), "%", sep = ""), 
+    main = "Are you worried about the environment? ")
+
+
+# altra cosa interessante da vedere è se le persone che dicono di ritenere importante comprare
+# prodotti eco-sostenibili sono disposti a pagare quel 60% in più
+wtp_plot <- ggplot(campione, aes(spesa))
+wtp <- wtp_plot + geom_bar(width = 1.5, aes(fill=compri)) + 
+  scale_fill_brewer(palette = 'Pastel1') +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 12), plot.title = element_text(size=18)) + 
+  scale_x_continuous(breaks=c(11, 13.5, 15.5, 18, 21),
+                   labels=c('€11', '€13.5', '€15.5', '€18', '€21')) +
+  labs(title="Willingness to spend on eco-friendly products", subtitle = 'Division showing for each price point whether the respondent buys such products', x = 'Willingness to pay', y = 'Count')
+wtp
+
+# quanto sono disposti a pagare divisi per slot di età
+
+library(dplyr)
+plot_wtp <- campione %>%
+  dplyr::count(compri, age_slots) %>%
+  dplyr::group_by(compri) %>%
+  dplyr::mutate(p = n/sum(n)) %>%
+  dplyr::group_by(compri, age_slots) %>%
+  dplyr::mutate(n = sum(n))
+
+ggplot(plot_wtp, aes(x = compri, y= p, fill = age_slots)) +
+  scale_fill_brewer(palette = 'Pastel1') + 
+  geom_col(position = "fill")+
+  scale_x_discrete(labels=c('None', 'Only some products', 'As much as possible', 'Everything')) +
+  scale_y_continuous(labels=scales::percent) +
+  labs(title="Bar plot of purchases", 
+       subtitle="According to age slots",
+       x = 'How many products',
+       y = 'Percentage of buyers',
+       fill = 'Age groups') +
+  theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 12), plot.title = element_text(size=18))
+
+
+# attitude + purchase
+campione['compri'] <- factor(campione$compri, levels = c('No', "Solo alcuni prodotti", 'Il più possibile', 'Tutto'), ordered = TRUE)
+levels(campione$compri) <- c('No', "Solo alcuni prodotti", 'Il più possibile', 'Il più possibile')
+
+
+campione$concern_num <- rowSums( corrds[,2:4] )
+campione$concern <- ''
+
+for (i in (1:nrow(campione))) {
+  if (campione$concern_num[i] <= 3){
+    campione$concern[i] <- 'No'
+  } else if (campione$concern_num[i] > 3 & campione$concern_num[i] <= 6) {
+    campione$concern[i] <- 'Non molto'
+  } else if (campione$concern_num[i] > 6 & campione$concern_num[i] <= 9) {
+    campione$concern[i] <- 'Abbastanza'
+  } else if (campione$concern_num[i] > 9) {
+    campione$concern[i] <- 'Molto'
+  }
+} 
+
+campione['concern'] <- factor(campione$concern, 
+                              levels = c('No', "Non molto", 'Abbastanza', 'Molto'), 
+                              ordered = TRUE)
+
+concern_plot <- ggplot(campione, aes(compri))
+con_purchase <- concern_plot + geom_bar(width = .5, aes(fill=concern)) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 12), plot.title = element_text(size=18)) + 
+  scale_x_discrete(labels=c('Non-buyers', 'Occasionals', 'Reflexive')) +
+  labs(title="Concern about the Environment", 
+       subtitle = 'Division of the 3 buyers behaviour', 
+       x = 'Type of buyers', 
+       y = 'Count') +
+  scale_fill_brewer(palette = 'Pastel1', 
+                    name = "Concern", 
+                    labels = c("No", "Not much", "Quite a bit", "A lot"))
+con_purchase 
+
+
+attitude_plot <- ggplot(campione, aes(compri))
+att_purchase <- attitude_plot + geom_bar(width = .5, aes(fill=cosa_pensi_acquisto)) + 
+  theme(axis.text.x = element_text(angle=65, vjust=0.6, size = 12), plot.title = element_text(size=18)) + 
+  scale_x_discrete(labels=c('Non-buyers', 'Occasionals', 'Reflexive')) +
+  labs(title="Attitude towards the purchase of organic food products", 
+       subtitle = 'Division of the 3 buyers behaviour', 
+       x = 'Type of buyers', 
+       y = 'Count') +
+  scale_fill_brewer(palette = 'Pastel1', 
+                    name = "Attitude", 
+                    labels = c("Useless", "Not very useful", "Quite useful", "Very important"))
+att_purchase
+
+```
+
+
