@@ -1,0 +1,127 @@
+---
+title: "Clustering"
+author: "Ginevra Cocciardi"
+output: pdf_document
+---
+```{r}
+rm(list = ls())
+setwd("/Users/ginevracocciardi/Desktop/tesi/dati")
+campione <- read.csv('campione_cat.csv', sep = ';', dec = ",")
+corrds <- read.csv('corrds.csv', sep = ',', dec = ",")
+corrds$X.1 <- NULL
+```
+
+I add the variable concern which was only present as numeric:
+
+```{r}
+
+campione$concern_num <- rowSums( corrds[,3:5] )
+campione$concern <- ''
+
+for (i in (1:nrow(campione))) {
+  if (campione$concern_num[i] <= 3){
+    campione$concern[i] <- 'No'
+  } else if (campione$concern_num[i] > 3 & campione$concern_num[i] <= 6) {
+    campione$concern[i] <- 'Non molto'
+  } else if (campione$concern_num[i] > 6 & campione$concern_num[i] <= 9) {
+    campione$concern[i] <- 'Abbastanza'
+  } else if (campione$concern_num[i] > 9) {
+    campione$concern[i] <- 'Molto'
+  }
+} 
+
+campione['concern'] <- factor(campione$concern, 
+                                          levels = c('No', "Non molto", 'Abbastanza', 'Molto'), 
+                                          ordered = TRUE)
+
+
+data <- campione[, c(2, 29, 6:10, 12:13, 24, 27, 16, 17:23)]
+```
+
+##### CLUSTERING
+
+Loading the libraries:
+
+```{r}
+library(dplyr)    # for data cleaning
+library(cluster)  # for gower similarity and pam
+library(Rtsne)    # for t-SNE plot
+library(ggplot2)  # for visualization
+```
+
+I take away the variable "compri", whoch is our control variable:
+```{r}
+data_cluster <- data[, c(1:7, 9:19)]
+```
+
+Since we have mixed data we can't use Euclidean distance: we use Gower distance to compute the dissimilarity matrix.
+
+```{r}
+gower_dist <- daisy(data_cluster,
+                    metric = "gower",
+                    type = list(logratio = 3))
+#summary(gower_dist)
+gower_mat <- as.matrix(gower_dist)
+
+# la coppia più uguale
+# data[which(gower_mat == min(gower_mat[gower_mat != min(gower_mat)]), arr.ind = TRUE)[1, ], ]
+# la coppia più diversa
+# data[which(gower_mat == max(gower_mat[gower_mat != max(gower_mat)]), arr.ind = TRUE)[1, ], ]
+```
+
+Now we need to choose the number of clusters. The used metric is silhouette width. We check from 2 to 10:
+
+```{r}
+sil_width <- c(NA)
+for(i in 2:10){
+  
+  pam_fit <- pam(gower_dist,
+                 diss = TRUE,
+                 k = i)
+  
+  sil_width[i] <- pam_fit$silinfo$avg.width
+  
+}
+# Plot sihouette width (higher is better)
+plot(1:10, sil_width,
+     xlab = "Number of clusters",
+     ylab = "Silhouette Width")
+lines(1:10, sil_width)
+```
+
+Although 2 is the higher we go for three (second best):
+
+```{r}
+pam_fit <- pam(gower_dist, diss = TRUE, k = 3)
+#pam_fit$clusinfo
+```
+
+Now we actually look into the clusters, adding also the variable "compri" to the dataset used for the clustering, so that we see how that has been divided:
+
+```{r}
+data_cluster$compri <- data$compri
+
+pam_results <- data_cluster %>%
+  mutate(cluster = pam_fit$clustering) %>%
+  group_by(cluster) %>%
+  do(the_summary = summary(.))
+pam_results$the_summary
+```
+
+Now let's plot them:
+
+```{r}
+set.seed(10)
+tsne_obj <- Rtsne(gower_dist, is_distance = TRUE) # riduzione dimensionalità per plot
+
+tsne_data <- tsne_obj$Y %>%
+  data.frame() %>%
+  setNames(c("X", "Y")) %>%
+  mutate(cluster = factor(pam_fit$clustering),
+         name = data_cluster$compri)
+ggplot(aes(x = X, y = Y), data = tsne_data) +
+  geom_point(aes(color = cluster))
+
+```
+
+
